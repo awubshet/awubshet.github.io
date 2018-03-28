@@ -130,12 +130,12 @@ val smallDfWithLength = smallDf.withColumn("prev_len", strLenUdf(col("prev")))
 
 //Let' see the minimum, average and max values of this 'prev_len' column
 smallDfWithLength.agg(min(col("prev_len")), avg(col("prev_len")), max(col("prev_len"))).head
-[2,16.375703347848926,182]
+//[2,16.375703347848926,182]
 
 //Here is the median calculated as the 50th percentile value
 val accuracy = 0.001 //you may have to start the spark shell with more resources for higher accuracy
 val prevLenMedian = smallDfWithLength.stat.approxQuantile("prev_len", Array(0.5), accuracy)(0)
-prevLenMedian: Double = 13.0
+//prevLenMedian: Double = 13.0
 
 //add a length column to our data set
 val myDataDfWithLength = myDataDf.withColumn("prev_len", strLenUdf(col("prev")))
@@ -161,6 +161,83 @@ myData2Df.write.format("parquet").partitionBy("cat").mode("overwrite").save("hdf
 ```
 
 Now let's read these two parquet files and compare query times. For each of the time measurements below, the spark shell is restarted so that there is no caching.
+```scala
+val myData2 = spark.read.format("parquet").load("hdfs://hb01rm01-np.pod06.wdc01.cxa.ibmcloud.com:9000/cxa/parquet_test/mydata2.parquet")
+// XXXXX s time needed to setup the meta data
+
+myData2.count()
+// 6.211262667 s
+myData2.filter("cat = 'GROUP1'").count()
+// 9.107866222 s
+
+myData2.filter("prev_len > 13").count()
+// 9.745776 s
+
+myData2.filter("type = 'external'").count()
+// 13.18347967 s
+
+val myData2_p = spark.read.format("parquet").load("hdfs://hb01rm01-np.pod06.wdc01.cxa.ibmcloud.com:9000/cxa/parquet_test/mydata2_p.parquet")
+// XXXXX s
+
+myData2_p.count()
+// 8.496096333 s
+
+myData2_p.filter("cat = 'GROUP1'").count()
+// 6.785112778 s
+
+myData2_p.filter("prev_len > 13").count()
+// 10.262274 s
 
 
+myData2_p.filter("type = 'external'").count()
+// 18.42553933 s
+```
 
+Now let's us arrange the data into 5 groups instead of 2. We do that by calculating the quitiles instead of the 50% percentile.
+```scala
+//Load the data sets
+val myData2 = spark.read.format("parquet").load("hdfs:///parquet_test/mydata2.parquet")
+val smallDf = spark.read.format("parquet").load("hdfs:///parquet_test/clickstream-enwiki-2018-02.parquet")
+
+val strLenUdf = udf((v: String) => v.length)
+val smallDfWithLength = smallDf.withColumn("prev_len", strLenUdf(col("prev")))
+
+val accuracy = 0.001
+val quintiles = Range(2,10,2).map(_/10.0).toArray
+// Array(0.2, 0.4, 0.6, 0.8)
+// do the computation on the smaller data frame as the distribution is the same
+val q5 = smallDfWithLength.stat.approxQuantile("prev_len", quintiles, accuracy)
+// Array(11.0, 12.0, 14.0, 22.0)
+
+// get the quintile boudaries in separate variables
+val (q1, q2, q3, q4) = (q5(0), q5(1), q5(2), q5(3))
+
+// A udf that assigns groups 1 to 5 based on string length
+val prevLenCat5 = udf((l: Int) => if (l < q1) "GROUP1" else if (l < q2) "GROUP2" else if (l < q3) "GROUP3" else if (l < q4) "GROUP4" else "GROUP5" )
+
+// Replace the exiting 'cat' column with the new 5 groups
+val myData5 = myData2.drop("cat").withColumn("cat", prevLenCat5(col("prev_len")))
+
+// check the data distribution
+myData5.filter("cat = 'GROUP1'").count() = 158197000 / 12.3%
+myData5.filter("cat = 'GROUP2'").count() = 258537450 / 20.0%
+myData5.filter("cat = 'GROUP3'").count() = 257951950 / 20.0%
+myData5.filter("cat = 'GROUP4'").count() = 356694700 / 27.7%
+myData5.filter("cat = 'GROUP5'").count() = 258450100 / 20.0%
+```
+Not evenly distributed like the grouping into two, but good enough for our measurements.
+
+Now, let's save our quintiled data 
+```scala
+// No partitioning
+myData5.write.format("parquet").mode("overwrite").save("hdfs://parquet_test/mydata5.parquet")
+// partitioned
+myData5.write.format("parquet").partitionBy("cat").mode("overwrite").save("hdfs:///parquet_test/mydata5_p.parquet")
+```
+
+Let's reload the data and do the same measures as above
+```scala
+val myData5 = spark.read.format("parquet").load("hdfs:///parquet_test/mydata5.parquet")
+
+val myData5_p = spark.read.format("parquet").load("hdfs:///parquet_test/mydata5_p.parquet")
+```
