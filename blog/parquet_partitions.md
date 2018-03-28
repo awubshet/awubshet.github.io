@@ -1,6 +1,6 @@
 Apache Parquet is a columnar data format for the hadoop ecosystem (much like the ORC format). It supports nested data structures.  It has support for different compression and encoding schemes to be applied to different columns. The schema is embedded in the data itself, so it is a self-describing data format. All this features make it efficient to store and enable performant querying of hdfs data as opposed to row oriented schemes like CSV and TSV.
 
-Parquet also supports partitioning of data based on the values of one or more columns. This article looks at the effects of partitioning on query performance. We are using the spark defaults which defaults the snappy compression algorithm.
+Parquet also supports partitioning of data based on the values of one or more columns. This article looks at the effects of partitioning on query performance. We are using the spark defaults which defaults to the snappy compression algorithm.
 
 In order to see how parquet files are stored in hdfs, let's save a very small data set with and without partitioning.
 Start the spark shell
@@ -60,7 +60,7 @@ hdfs dfs -copyFromLocal clickstream-enwiki-2018-02.tsv /parquet_test/
 
 Let's start a spark shell on yarn (disabling the dynamic executor allocation so that our time measurements are against the same amount of resource allocated)
 ```
-/usr/local/spark-2.2.0-bin-hadoop2.7/bin/spark-shell --master yarn --driver-memory 1g --executor-memory 8g --num-executors 8 --conf spark.default.parallelism=1024 --conf spark.executor.cores=4 --conf spark.dynamicAllocation.enabled=false
+spark-shell --master yarn --driver-memory 1g --executor-memory 8g --num-executors 8 --conf spark.default.parallelism=1024 --conf spark.executor.cores=4 --conf spark.dynamicAllocation.enabled=false
 ```
 
 Read the tsv file
@@ -111,3 +111,54 @@ Let's check the sizes of the files (folders) in hdfs
 63.5 G   /parquet_test/mydata.parquet
 ```
 This is a small dataset, but we can see that the parquet format needed about 62% less disk space the smaller dataset, and 37% for the larger data sense (the larger dataset has a UUID column which can't be as effectively encoded and compressed as a column with possible repetitions). 
+
+We can partition the data on any one or more of the columns. Since we don't know the contents or our data set, let's append a new column with data distribution we control. This column will will have the value "GGOUP1" or "GROUP2", based on whether the length of the 'prev' column is greater than or less than the median length of that column.
+
+```scala
+//Read the parquet files
+val myDataDf = spark.read.format("parquet").load("hdfs:///parquet_test/mydata.parquet")
+//load the smaller data set so that we can do the median calculation faster on it
+val smallDf = spark.read.format("parquet").load("hdfs:///parquet_test/clickstream-enwiki-2018-02.parquet")
+
+//A udf which calculates string length
+val strLenUdf = udf((v: String) => v.length)
+
+//Let's add the length column to the dataframe
+val smallDfWithLength = smallDf.withColumn("prev_len", strLenUdf(col("prev")))
+
+//Let' see the minimum, average and max values of this 'prev_len' column
+smallDfWithLength.agg(min(col("prev_len")), avg(col("prev_len")), max(col("prev_len"))).head
+[2,16.375703347848926,182]
+
+//Here is the median calculated as the 50th percentile value
+val accuracy = 0.001 //you may have to start the spark shell with more resources for higher accuracy
+val prevLenMedian = smallDfWithLength.stat.approxQuantile("prev_len", Array(0.5), accuracy)(0)
+prevLenMedian: Double = 13.0
+
+//add a length column to our data set
+val myDataDfWithLength = myDataDf.withColumn("prev_len", strLenUdf(col("prev")))
+
+//A udf which returns "GROUP1" or "GROUP2" based on string length
+val prevLenCatUdf = udf((l: Int) => if (l < prevLenMedian) "GROUP1" else "GROUP2")
+
+//Append the column 'cat' with the possible values of "GROUP1" or "GROUP2"
+val myData2Df = myDataDfWithLength.withColumn("cat", prevLenCatUdf(col("prev_len")))
+```
+
+Hopefully we now have data distributed evenly against our two groups. Let's check that with simple counts
+```scala
+myData2Df.filter("cat = 'GROUP1'").count() = 628896300 / 48.8%
+myData2Df.filter("cat = 'GROUP2'").count() = 660934900 / 51.2%
+```
+Let's now save the dataframe with the extra columns without and with partitoning
+```scala
+//no partitions
+myData2Df.write.format("parquet").mode("overwrite").save("hdfs:///parquet_test/mydata2.parquet")
+//partitioned against the 'cat' column
+myData2Df.write.format("parquet").partitionBy("cat").mode("overwrite").save("hdfs:///parquet_test/mydata2_p.parquet")
+```
+
+Now let's read these two parquet files and compare query times. For each of the time measurements below, the spark shell is restarted so that there is no caching.
+
+
+
