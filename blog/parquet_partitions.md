@@ -163,31 +163,24 @@ myData2Df.write.format("parquet").partitionBy("cat").mode("overwrite").save("hdf
 Now let's read these two parquet files and compare query times. For each of the time measurements below, the spark shell is restarted so that there is no caching.
 ```scala
 val myData2 = spark.read.format("parquet").load("hdfs://hb01rm01-np.pod06.wdc01.cxa.ibmcloud.com:9000/cxa/parquet_test/mydata2.parquet")
-// XXXXX s time needed to setup the meta data
-
+// 2.455856714 s time needed to setup the meta data
 myData2.count()
 // 6.211262667 s
 myData2.filter("cat = 'GROUP1'").count()
 // 9.107866222 s
-
 myData2.filter("prev_len > 13").count()
 // 9.745776 s
-
 myData2.filter("type = 'external'").count()
 // 13.18347967 s
 
 val myData2_p = spark.read.format("parquet").load("hdfs://hb01rm01-np.pod06.wdc01.cxa.ibmcloud.com:9000/cxa/parquet_test/mydata2_p.parquet")
-// XXXXX s
-
+// 2.540029429 s
 myData2_p.count()
 // 8.496096333 s
-
 myData2_p.filter("cat = 'GROUP1'").count()
 // 6.785112778 s
-
 myData2_p.filter("prev_len > 13").count()
 // 10.262274 s
-
 
 myData2_p.filter("type = 'external'").count()
 // 18.42553933 s
@@ -238,6 +231,65 @@ myData5.write.format("parquet").partitionBy("cat").mode("overwrite").save("hdfs:
 Let's reload the data and do the same measures as above
 ```scala
 val myData5 = spark.read.format("parquet").load("hdfs:///parquet_test/mydata5.parquet")
+// 2.113559923
+myData5.count()
+// 5.781052333 s
+myData5.filter("cat = 'GROUP2'").count()
+// 10.357212 s
+myData5.filter("prev_len > 13").count()
+// 7.238561 s
+myData5.filter("type = 'external'").count()
+// 11.06506467 s
 
 val myData5_p = spark.read.format("parquet").load("hdfs:///parquet_test/mydata5_p.parquet")
+// 2.341337769
+myData5_p.count()
+// 9.462628667 s
+myData5_p.filter("cat = 'GROUP2'").count()
+// 4.795245333 s
+myData5_p.filter("prev_len > 13").count()
+// 8.046922667 s
+myData5_p.filter("type = 'external'").count()
+// 26.915488 s
 ```
+
+The above results show that partitioning does help when the partitioning column has only a number of possible values and we query against that column. When we had only two possible vales, the query was 25.5% faster. With the possible five values, it got to be 53.7% faster. Queries against other columns are slightly slower. Let's now see the effect of having a column with a 100 possible values.
+
+```scala
+val rand = new scala.util.Random
+val randLimit = 1000
+val nextRandomIntUdf = udf(() => "GROUP" + rand.nextInt(randLimit))
+// load the data and transform
+val myData5 = spark.read.format("parquet").load("hdfs:///parquet_test/mydata5.parquet")
+val myData1k = myData5.drop("cat").withColumn("cat", nextRandomIntUdf())
+
+// Save the unparitioned and partitioned parquet data to hdfs
+myData1k.write.format("parquet").mode("overwrite").save("hdfs:/parquet_test/mydata1k.parquet")
+myData1k.write.format("parquet").partitionBy("cat").mode("overwrite").save("hdfs:///parquet_test/mydata1k_p.parquet")
+```
+
+Let's do the same measurements for our new data set where the column 'cat' can have one of possible 100 values.
+```scala
+val myData1k = spark.read.format("parquet").load("hdfs:///parquet_test/mydata1k.parquet")
+// 1.929997125 s
+myData1k.count()   
+// 4.885199667 s
+myData1k.filter("cat = 'GROUP357'").count()
+// 9.909249 s
+myData1k.filter("prev_len > 13").count()
+// 6.130633333 s
+myData1k.filter("type = 'external'").count()
+// 10.44633 s
+
+val myData1k_p = spark.read.format("parquet").load("hdfs:///parquet_test1/mydata1k_p.parquet")
+// 9.728571429 s
+myData1k_p.count()
+// 58.37241867 s
+myData1k_p.filter("cat = 'GROUP357'").count()
+// 1.650945667 s
+myData1k_p.filter("prev_len > 13").count()
+// 40.44449867 s
+myData1k_p.filter("type = 'external'").count()
+// 51.88738233 s
+```
+
