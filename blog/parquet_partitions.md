@@ -2,7 +2,7 @@
 
 Apache Parquet is a columnar data format for the hadoop ecosystem (much like the ORC format). It supports nested data structures.  It has support for different compression and encoding schemes to be applied to different columns. The schema is embedded in the data itself, so it is a self-describing data format. All this features make it efficient to store and enable performant querying of hdfs data as opposed to row oriented schemes like CSV and TSV.
 
-Parquet also supports partitioning of data based on the values of one or more columns. This article looks at the effects of partitioning on query performance. We are using the spark defaults which defaults to the snappy compression algorithm.
+Parquet also supports partitioning of data based on the values of one or more columns. This article looks at the effects of partitioning on query performance. We are using the spark defaults options which is the snappy compression algorithm.
 
 In order to see how parquet files are stored in hdfs, let's save a very small data set with and without partitioning.
 Start the spark shell
@@ -23,21 +23,24 @@ capitalCitiesDf.write.format("parquet").partitionBy("country").mode("overwrite")
 Here is the folder structure in hdfs (output cropped and formated for brevity)
 ```bash
 hdfs dfs -ls -R  /parquet_test/capitalcities.parquet
-/cxa/parquet_test/capitalcities.parquet/_SUCCESS
-/cxa/parquet_test/capitalcities.parquet/part-00000-87439b68-7536-44a2-9eaa-1b40a236163d-c000.snappy.parquet
-/cxa/parquet_test/capitalcities.parquet/part-00001-87439b68-7536-44a2-9eaa-1b40a236163d-c000.snappy.parquet
-/cxa/parquet_test/capitalcities.parquet/part-00002-87439b68-7536-44a2-9eaa-1b40a236163d-c000.snappy.parquet
+|-/cxa/parquet_test/capitalcities.parquet/_SUCCESS
+|-/cxa/parquet_test/capitalcities.parquet/part-00000-87439b68-7536-44a2-9eaa-1b40a236163d-c000.snappy.parquet
+|-/cxa/parquet_test/capitalcities.parquet/part-00001-87439b68-7536-44a2-9eaa-1b40a236163d-c000.snappy.parquet
+|-/cxa/parquet_test/capitalcities.parquet/part-00002-87439b68-7536-44a2-9eaa-1b40a236163d-c000.snappy.parquet
 
 hdfs dfs -ls -R  /parquet_test/capitalcities_p.parquet
-/parquet_test/capitalcities_p.parquet/_SUCCESS
-/parquet_test/capitalcities_p.parquet/country=Canada
-  /parquet_test/capitalcities_p.parquet/country=Canada/part-00001-11394952-d93a-43a1-bb85-475b15e2874d.c000.snappy.parquet
-/parquet_test/capitalcities_p.parquet/country=Mexico
-  /parquet_test/capitalcities_p.parquet/country=Mexico/part-00002-11394952-d93a-43a1-bb85-475b15e2874d.c000.snappy.parquet
-/parquet_test/capitalcities_p.parquet/country=USA
-  /parquet_test/capitalcities_p.parquet/country=USA/part-00000-11394952-d93a-43a1-bb85-475b15e2874d.c000.snappy.parquet
+|-/parquet_test/capitalcities_p.parquet/_SUCCESS
+|-/parquet_test/capitalcities_p.parquet/country=Canada
+|   |
+|   |-/parquet_test/capitalcities_p.parquet/country=Canada/part-00001-11394952-d93a-43a1-bb85-475b15e2874d.c000.snappy.parquet
+|-/parquet_test/capitalcities_p.parquet/country=Mexico
+|   |
+|   |-/parquet_test/capitalcities_p.parquet/country=Mexico/part-00002-11394952-d93a-43a1-bb85-475b15e2874d.c000.snappy.parquet
+|-/parquet_test/capitalcities_p.parquet/country=USA
+|   |
+|   |-/parquet_test/capitalcities_p.parquet/country=USA/part-00000-11394952-d93a-43a1-bb85-475b15e2874d.c000.snappy.parquet
 ```
-In the unpartitioned parquet file all the data is in one folder, but in the partitioned parquet file the data is in three folders denoting the column upon which the data is partitioned against (country=Canada, country=Mexico and country=USA)
+In the unpartitioned parquet file all the data is in one folder, but in the partitioned parquet file the data is in three folders denoting the column values upon which the data is partitioned (country=Canada, country=Mexico and country=USA)
 
 Let's have some data for testing. The wikipedia click stream files (https://dumps.wikimedia.org/other/clickstream/readme.html) are a monthly dataset of counts of referer and page pairs in TSV. Here is the schema:
 
@@ -76,7 +79,7 @@ var clickStreamSchema = StructType(Array(
     ))
 val tsvDf = spark.read.format("csv").option("sep", "\t").schema(clickStreamSchema).load("/cxa/parquet_test1/clickstream-enwiki-2018-02.tsv")
 ```
-Let's artificially make this dataset larger by adding UUID column multiple times and unioning the resulting data frames. 
+Let's artificially make this dataset larger by adding UUID column multiple times and unioning the resulting dataframes. 
 
 ```scala
 import java.util.UUID.randomUUID
@@ -90,12 +93,12 @@ val emptyDf = Seq.empty[(String, String, String, Int, String)].toDF("prev", "cur
 //50 times as many recored with an extra UUID column
 val bigDf = Range(0,50).foldLeft(emptyDf)((a,e) => a.union(tsvDf.withColumn("uuid", randomUUIDUdf())))
 
-//A sanity check if we have 50 times a many records
+//A sanity check to see if we have 50 times a many records
 tsvDf.count() = 25796624
 bigDf.count() = 1289831200
 ```
 
-Now let's save them in the parquet format. Save `bigDf` in the tsv format too.
+Now let's save them in the parquet format. Save `bigDf` in the tsv format too, so that we see the disk space savings too.
 ```scala
 //Save them in the parquet format
 bigDf.write.format("parquet").mode("overwrite").save("hdfs://hadoop_namenode:9000/parquet_test/mydata.parquet")
@@ -112,9 +115,9 @@ Let's check the sizes of the files (folders) in hdfs
 100.4 G  /parquet_test/mydata.csv
 63.5 G   /parquet_test/mydata.parquet
 ```
-This is a small dataset, but we can see that the parquet format needed about 62% less disk space the smaller dataset, and 37% for the larger data sense (the larger dataset has a UUID column which can't be as effectively encoded and compressed as a column with possible repetitions). 
+This is a small dataset, but we can see that the parquet format needed about 62% less disk space the smaller dataset, and 37% for the larger dataset (the larger dataset has a UUID column which can't be as effectively encoded and compressed as a column with possible repetitions). 
 
-We can partition the data on any one or more of the columns. Since we don't know the contents or our data set, let's append a new column with data distribution we control. This column will will have the value "GGOUP1" or "GROUP2", based on whether the length of the 'prev' column is greater than or less than the median length of that column.
+We can partition the data on any one or more of the columns. Since we don't know the contents or our data set, let's append a new column with data distribution we control. This column will will have the value "GOUP1" or "GROUP2", based on whether the length of the 'prev' column is greater than or less than the median length of that column.
 
 ```scala
 //Read the parquet files
@@ -147,12 +150,12 @@ val prevLenCatUdf = udf((l: Int) => if (l < prevLenMedian) "GROUP1" else "GROUP2
 val myData2Df = myDataDfWithLength.withColumn("cat", prevLenCatUdf(col("prev_len")))
 ```
 
-Hopefully we now have data distributed evenly against our two groups. Let's check that with simple counts
+Hopefully we now have data distributed evenly into our two groups. Let's check that with simple counts
 ```scala
 myData2Df.filter("cat = 'GROUP1'").count() = 628896300 / 48.8%
 myData2Df.filter("cat = 'GROUP2'").count() = 660934900 / 51.2%
 ```
-Let's now save the dataframe with the extra columns without and with partitoning
+That's not bad. Let's now save the dataframe with the extra columns without and with partitoning
 ```scala
 //no partitions
 myData2Df.write.format("parquet").mode("overwrite").save("hdfs:///parquet_test/mydata2.parquet")
@@ -160,7 +163,7 @@ myData2Df.write.format("parquet").mode("overwrite").save("hdfs:///parquet_test/m
 myData2Df.write.format("parquet").partitionBy("cat").mode("overwrite").save("hdfs:///parquet_test/mydata2_p.parquet")
 ```
 
-Now let's read these two parquet files and compare query times. For each of the time measurements below, the spark shell is restarted so that there is no caching.
+Now let's read these two parquet files and compare query times. For each of the time measurements below, the spark shell is restarted so that there is no caching. The average times elapsed are shown as a comment on the next line.
 ```scala
 val myData2 = spark.read.format("parquet").load("hdfs://hb01rm01-np.pod06.wdc01.cxa.ibmcloud.com:9000/cxa/parquet_test/mydata2.parquet")
 // 2.455856714 s time needed to setup the meta data
@@ -181,7 +184,6 @@ myData2_p.filter("cat = 'GROUP1'").count()
 // 6.785112778 s
 myData2_p.filter("prev_len > 13").count()
 // 10.262274 s
-
 myData2_p.filter("type = 'external'").count()
 // 18.42553933 s
 ```
@@ -198,7 +200,7 @@ val smallDfWithLength = smallDf.withColumn("prev_len", strLenUdf(col("prev")))
 val accuracy = 0.001
 val quintiles = Range(2,10,2).map(_/10.0).toArray
 // Array(0.2, 0.4, 0.6, 0.8)
-// do the computation on the smaller data frame as the distribution is the same
+// do the computation on the smaller dataframe as the distribution is the same
 val q5 = smallDfWithLength.stat.approxQuantile("prev_len", quintiles, accuracy)
 // Array(11.0, 12.0, 14.0, 22.0)
 
@@ -228,7 +230,7 @@ myData5.write.format("parquet").mode("overwrite").save("hdfs://parquet_test/myda
 myData5.write.format("parquet").partitionBy("cat").mode("overwrite").save("hdfs:///parquet_test/mydata5_p.parquet")
 ```
 
-Let's reload the data and do the same measures as above
+Let's reload the data and do the same measurements as above
 ```scala
 val myData5 = spark.read.format("parquet").load("hdfs:///parquet_test/mydata5.parquet")
 // 2.113559923
@@ -253,11 +255,12 @@ myData5_p.filter("type = 'external'").count()
 // 26.915488 s
 ```
 
-The above results show that partitioning does help when the partitioning column has only a number of possible values and we query against that column. When we had only two possible vales, the query was 25.5% faster. With the possible five values, it got to be 53.7% faster. Queries against other columns are slightly slower. Let's now see the effect of having a column with a 100 possible values.
+The above results show that partitioning does help when the partitioning column has only a number of possible values and we query against that column. When we had only two possible vales, the query was 25.5% faster. With the possible five values, it got to be 53.7% faster. Queries against other columns are slightly slower. Let's now see the effect of having a column with a 1000 possible values.
 
 ```scala
 val rand = new scala.util.Random
 val randLimit = 1000
+//a udf which returns 'GROUPX' where X is an integer between -1 and 1000.
 val nextRandomIntUdf = udf(() => "GROUP" + rand.nextInt(randLimit))
 // load the data and transform
 val myData5 = spark.read.format("parquet").load("hdfs:///parquet_test/mydata5.parquet")
@@ -293,3 +296,30 @@ myData1k_p.filter("type = 'external'").count()
 // 51.88738233 s
 ```
 
+Querying against the partitioning column is now 83.3% faster but other operations are much slower. The time needed to set up the meta data is also longer. Here is a table showing the relative times elapsed on queries against a partitioned parquet filte as a ratio of times elapsed for queries against a non partitioned parquet file.
+
+
+<table>
+<tr>
+<td>
+Number of possbile values for the column to be partitioned</td><td>2</td><td>5</td><td>1000
+</td>
+</tr>
+<tr>
+<td>
+Query against the paritioned column</td><td>74.50%</td><td>46.30%</td><td>16.66%
+</td>
+</tr>
+<tr>
+<td>
+Query against other columns</td><td>89.51%</td><td>191.01%</td><td>556.99%
+</td>
+</tr>
+<tr>
+<td>
+Total count query</td><td>136.79%</td><td>163.68%</td><td>1194.88%
+</td>
+</tr>
+</table>
+
+As can be seen in the above table, we should partition a parquet file only on the columns to which the data is likely to be queried against. The query times are substantially larger if there is a need to query against another column or retrieve all the data. That's especially true of columns with many possible values. It's therefore prudent to check the distribution of the data on the selected columns before deciding to partition. Although this article didn't discuss partitioning on multiple columns, the same concepts apply.
