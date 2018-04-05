@@ -2,7 +2,7 @@
 
 Apache Parquet is a columnar data format for the hadoop ecosystem (much like the ORC format). It supports nested data structures.  It has support for different compression and encoding schemes to be applied to different columns. The schema is embedded in the data itself, so it is a self-describing data format. All this features make it efficient to store and enable performant querying of hdfs data as opposed to row oriented schemes like CSV and TSV.
 
-Parquet also supports partitioning of data based on the values of one or more columns. This article looks at the effects of partitioning on query performance. We are using the spark defaults options which is the snappy compression algorithm.
+Parquet also supports partitioning of data based on the values of one or more columns. This article looks at the effects of partitioning on query performance. We use spark on yarn, but the conclusions at the end hold true for other hdfs queyring tools like hive and drill. No explicit options are set, so the spark default snappy compression is used.
 
 In order to see how parquet files are stored in hdfs, let's save a very small data set with and without partitioning.
 Start the spark shell
@@ -98,7 +98,7 @@ tsvDf.count() = 25796624
 bigDf.count() = 1289831200
 ```
 
-Now let's save them in the parquet format. Save `bigDf` in the tsv format too, so that we see the disk space savings too.
+Now let's save them in the parquet format. Save `bigDf` in the tsv format too, so that we see the disk space savings.
 ```scala
 //Save them in the parquet format
 bigDf.write.format("parquet").mode("overwrite").save("hdfs://hadoop_namenode:9000/parquet_test/mydata.parquet")
@@ -115,7 +115,7 @@ Let's check the sizes of the files (folders) in hdfs
 100.4 G  /parquet_test/mydata.csv
 63.5 G   /parquet_test/mydata.parquet
 ```
-This is a small dataset, but we can see that the parquet format needed about 62% less disk space the smaller dataset, and 37% for the larger dataset (the larger dataset has a UUID column which can't be as effectively encoded and compressed as a column with possible repetitions). 
+Even though we are dealing with relatively small datasets, it can be seen that the parquet format requires less disk space than the tsv format. We can see that the parquet format needed about 62% less disk space the smaller dataset, and 37% for the larger dataset (the larger dataset has a UUID column which can't be as effectively encoded and compressed as a column with possible repetitions). 
 
 We can partition the data on any one or more of the columns. Since we don't know the contents or our data set, let's append a new column with data distribution we control. This column will will have the value "GOUP1" or "GROUP2", based on whether the length of the 'prev' column is greater than or less than the median length of that column.
 
@@ -163,7 +163,7 @@ myData2Df.write.format("parquet").mode("overwrite").save("hdfs:///parquet_test/m
 myData2Df.write.format("parquet").partitionBy("cat").mode("overwrite").save("hdfs:///parquet_test/mydata2_p.parquet")
 ```
 
-Now let's read these two parquet files and compare query times. For each of the time measurements below, the spark shell is restarted so that there is no caching. The average times elapsed are shown as a comment on the next line.
+Now, let's read these two parquet files and compare querying times. For each of the time measurements below, the spark shell is restarted so that there is no caching. The average times elapsed are shown as comments on the lines after the operations.
 ```scala
 val myData2 = spark.read.format("parquet").load("hdfs://hb01rm01-np.pod06.wdc01.cxa.ibmcloud.com:9000/cxa/parquet_test/mydata2.parquet")
 // 2.455856714 s time needed to setup the meta data
@@ -220,7 +220,7 @@ myData5.filter("cat = 'GROUP3'").count() = 257951950 / 20.0%
 myData5.filter("cat = 'GROUP4'").count() = 356694700 / 27.7%
 myData5.filter("cat = 'GROUP5'").count() = 258450100 / 20.0%
 ```
-Not evenly distributed like the grouping into two, but good enough for our measurements.
+Not as evenly distributed like the grouping into two, but good enough for our measurements.
 
 Now, let's save our quintiled data 
 ```scala
@@ -296,7 +296,7 @@ myData1k_p.filter("type = 'external'").count()
 // 51.88738233 s
 ```
 
-Querying against the partitioning column is now 83.3% faster but other operations are much slower. The time needed to set up the meta data is also longer. Here is a table showing the relative times elapsed on queries against a partitioned parquet filte as a ratio of times elapsed for queries against a non partitioned parquet file.
+Querying against the partitioning column is now 83.3% faster but other operations are much slower. The time needed to set up the meta data is also longer. Here is a table showing the relative times elapsed on queries against a partitioned parquet filte as a ratio to times elapsed for queries against a non partitioned parquet file.
 
 
 <table>
@@ -322,4 +322,4 @@ Total count query</td><td>136.79%</td><td>163.68%</td><td>1194.88%
 </tr>
 </table>
 
-As can be seen in the above table, we should partition a parquet file only on the columns to which the data is likely to be queried against. The query times are substantially larger if there is a need to query against another column or retrieve all the data. That's especially true of columns with many possible values. It's therefore prudent to check the distribution of the data on the selected columns before deciding to partition. Although this article didn't discuss partitioning on multiple columns, the same concepts apply.
+As can be seen in the above table, we should partition a parquet file only on the columns to which the data is likely to be queried against. The query times are substantially larger if there is a need to query against another column or retrieve all the data. That's especially true of columns with a large number of possible values. It's therefore prudent to check the distribution of the data on the selected columns before deciding to partition. Although this article didn't discuss partitioning on multiple columns, the same concepts apply.
