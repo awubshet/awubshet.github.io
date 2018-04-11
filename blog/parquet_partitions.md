@@ -109,7 +109,7 @@ bigDf.write.format("csv").option("sep", "\t").mode("overwrite").save("hdfs://had
 
 Let's check the sizes of the files (folders) in hdfs
 ```bash
-/usr/local/hadoop/bin/hdfs dfs -du -s -h /parquet_test/*
+hdfs dfs -du -s -h /parquet_test/*
 414.3 M  /parquet_test/clickstream-enwiki-2018-02.parquet
 1.1 G    /parquet_test/clickstream-enwiki-2018-02.tsv
 100.4 G  /parquet_test/mydata.csv
@@ -163,7 +163,7 @@ myData2Df.write.format("parquet").mode("overwrite").save("hdfs:///parquet_test/m
 myData2Df.write.format("parquet").partitionBy("cat").mode("overwrite").save("hdfs:///parquet_test/mydata2_p.parquet")
 ```
 
-Now, let's read these two parquet files and compare querying times. For each of the time measurements below, the spark shell is restarted so that there is no caching. The average times elapsed are shown as comments on the lines after the operations.
+Let's now read these two parquet files and compare querying times. For each of the time measurements below, the spark shell is restarted so that there is no caching. The average times elapsed are shown as comments on the lines after the operations.
 ```scala
 val myData2 = spark.read.format("parquet").load("hdfs://hb01rm01-np.pod06.wdc01.cxa.ibmcloud.com:9000/cxa/parquet_test/mydata2.parquet")
 // 2.455856714 s time needed to setup the meta data
@@ -188,7 +188,7 @@ myData2_p.filter("type = 'external'").count()
 // 18.42553933 s
 ```
 
-Now let's us arrange the data into 5 groups instead of 2. We do that by calculating the quitiles instead of the 50% percentile.
+Now, let's us arrange the data into 5 groups instead of 2 and see if that has any impact. We do that by calculating the quitiles instead of the 50% percentile.
 ```scala
 //Load the data sets
 val myData2 = spark.read.format("parquet").load("hdfs:///parquet_test/mydata2.parquet")
@@ -222,7 +222,7 @@ myData5.filter("cat = 'GROUP5'").count() = 258450100 / 20.0%
 ```
 Not as evenly distributed like the grouping into two, but good enough for our measurements.
 
-Now, let's save our quintiled data 
+Let's save our quintiled data 
 ```scala
 // No partitioning
 myData5.write.format("parquet").mode("overwrite").save("hdfs://parquet_test/mydata5.parquet")
@@ -271,7 +271,7 @@ myData1k.write.format("parquet").mode("overwrite").save("hdfs:/parquet_test/myda
 myData1k.write.format("parquet").partitionBy("cat").mode("overwrite").save("hdfs:///parquet_test/mydata1k_p.parquet")
 ```
 
-Let's do the same measurements for our new data set where the column 'cat' can have one of possible 100 values.
+Let's do the same measurements for our new data set where the column 'cat' can have one of possible 1000 values.
 ```scala
 val myData1k = spark.read.format("parquet").load("hdfs:///parquet_test/mydata1k.parquet")
 // 1.929997125 s
